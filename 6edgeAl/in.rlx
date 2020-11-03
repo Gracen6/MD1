@@ -1,0 +1,43 @@
+units			metal
+boundary		f f p
+atom_style		atomic
+timestep		0.005
+
+read_data		m111.data
+
+pair_style		eam/alloy
+pair_coeff		* * ../AlLEA.eam.alloy Al Al
+
+variable		E equal pe
+run			0
+compute			pe all pe/atom
+
+region			mid block -156 156 -33 33 INF INF
+group			mid region mid
+group			fixb subtract all mid
+set			group fixb type 2
+thermo			10
+
+compute			pea all pe/atom
+compute			csp all centro/atom fcc
+compute			apem mid reduce sum c_pea
+variable		Nm equal 38106 #38172
+
+thermo_style		custom step temp pe c_apem v_Nm
+
+velocity		fixb set 0 0 0
+fix			1 fixb setforce 0 0 0
+dump			1 all custom 200 rs*.xyz id type x y z c_pea c_csp
+dump_modify		1 sort id
+minimize		1e-15 1e-15 1000 1000
+variable		mpea equal $(c_apem)/$(v_Nm)
+undump			1
+
+# output initial configurations
+dump			1 all custom 1 r114.xyz id type x y z c_pea c_csp
+dump_modify		1 sort id
+run			0
+undump			1
+
+print 			"^^^before an edge mid pe: $(c_apem)"
+print 			"^^^before an edge, the mid pe/atom: $(v_mpea)"

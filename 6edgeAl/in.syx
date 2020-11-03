@@ -1,0 +1,127 @@
+units			metal
+boundary		f f p
+atom_style		atomic
+timestep		0.005
+
+read_data		nm112.data
+
+pair_style		eam/alloy
+pair_coeff		* * ../AlLEA.eam.alloy Al Al
+
+variable		E equal pe
+run			0
+compute			pe all pe/atom
+
+group			fixb type 2
+group			mid subtract all fixb
+
+
+#new up and bot boundary: fix bot
+#apply z-displacement to up, to apply simple shear strain incrementally
+#delta e_yz = dz/Ly = v*dt/Ly
+region			up  block INF INF  33 INF INF INF units box
+region			bot block INF INF INF -33 INF INF units box
+group 			up region up
+group           	bot region bot
+group			fixb2 union up bot
+group           	mid2 subtract all fixb2
+
+variable            	N equal atoms
+variable	    	step equal step
+variable            	temp equal temp
+variable            	vol equal vol
+variable            	pe equal pe
+variable		Nm equal 38106 #38172
+variable            	etotal equal etotal
+
+compute			csp all centro/atom fcc
+compute			pea all pe/atom
+compute             	mppe mid2 pe/atom
+
+compute			apem mid reduce sum c_pea
+thermo_style		custom step temp pe vol v_N v_Nm c_apem
+run			0
+variable		mpea equal $(c_apem)/$(v_Nm)
+
+#variables for stress calculations
+compute                 ps all stress/atom NULL
+compute                 p11 mid reduce  sum  c_ps[1]
+compute                 p22 mid reduce  sum  c_ps[2]
+compute                 p33 mid reduce  sum  c_ps[3]
+compute                 p12 mid reduce  sum  c_ps[4]
+compute                 p13 mid reduce  sum  c_ps[5]
+compute                 p23 mid reduce  sum  c_ps[6]
+
+
+timestep	    	0.002
+
+thermo			50
+thermo_style		custom step temp pe vol v_N etotal c_apem vol xy yz pxx pyy pzz pxy pyz pxz c_p12 c_p23
+thermo_modify       	format float %f
+
+
+#initial minimization, equilibrium
+#velocity		fixb set 0 0 0
+fix			2 fixb setforce 0.0 0.0 0.0
+fix 	            	3 all nve
+dump			1 all custom 50 rs*.xyz id type x y z c_pea c_csp
+dump_modify		1 sort id
+minimize		1e-15 1e-15 1000 1000
+
+print 			"^^^after an edge, mid pe: $(c_apem)"
+print 			"^^^after an edge,  mid pe/atom: $(v_mpea)"
+run			0
+
+write_restart           rst.screw
+
+dump			3 all custom 1 rsts0.xyz id type x y z c_pea c_csp c_ps[4]
+dump			4 mid2 custom 1 ms0.xyz id type x y z c_pea c_csp c_ps[4] 
+dump_modify		3 sort id 
+dump_modify		4 sort id 
+run			0
+
+undump			1
+undump			3
+undump			4
+
+#start shear by exy at constant rate = ${vup}*dt*66/66/(66*0.002*10^-12)
+variable		vup equal 0.025
+velocity		up set ${vup} 0 0
+velocity		mid2 ramp vx 0.0 ${vup} y -33 33 sum yes
+
+reset_timestep 		0
+change_box		all triclinic
+
+variable		p11 equal "-pxx/10"
+variable		p22 equal "-pyy/10"
+variable		p33 equal "-pzz/10"
+variable		p12 equal "-pxy/10"
+variable		p23 equal "-pyz/10"
+variable		volM equal (4.032*4.032*4.032/4*(v_Nm))
+variable		ap12 equal ((c_p12)*0.1/(v_volM))
+variable		ap23 equal ((c_p23)*0.1/(v_volM))
+
+run			0
+variable		an loop 50
+label			loopan
+
+run			66
+
+minimize                1e-12 1e-12 10000 10000
+
+variable	 	ee12 equal ${an}*${vup}*0.002	
+#variable	 	ee23 equal ${an}*${vup}*0.002	
+fix			print2 all print 1 "${an} ${ee12} ${ap12} ${p12}" append ssyz.dat screen no 
+run			1
+unfix			print2
+
+dump			3 all custom 1 rsts${an}.xyz id type x y z c_pea c_csp c_ps[4]
+dump			4 mid2 custom 1 ms${an}.xyz id type x y z c_pea c_csp c_ps[4] 
+dump_modify		3 sort id 
+dump_modify		4 sort id 
+run			0
+undump			3
+undump			4
+
+next			an
+jump			in.syx loopan
